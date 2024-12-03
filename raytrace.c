@@ -4,11 +4,15 @@
 #include <omp.h>
 #include <time.h>
 
-#define BOX_SIZE 1003.0
-#define NUM_OBJECTS 10
+#define BOX_SIZE 1003
+#define NUM_SPHERES 11
+#define NUM_CUBES 2
 #define TRACE_DEPTH 7
 #define NUM_ITERATIONS 100
-#define COLLISION_THRESHOLD 1e-7
+
+#define COLLISION_THRESHOLD 1e-6
+#define EPSILON 1e-8
+
 
 #ifndef INF
 #define INF 1e6
@@ -145,7 +149,9 @@ int collide_cube(Cube* c, Ray* q, double* t) {
     double t_min = 0, t_max = *t;
 
     for (int i = 0; i < 3; ++i) {
-        double invD = 1.0f / (i == 0 ? q->direction.x : (i == 1 ? q->direction.y : q->direction.z));
+        double delim = (i == 0 ? q->direction.x : (i == 1 ? q->direction.y : q->direction.z));
+        double invD = 1.0f / ((fabs(delim) > EPSILON) ? delim : EPSILON);
+
         double t0 = ((i == 0 ? c->min_corner.x : (i == 1 ? c->min_corner.y : c->min_corner.z)) - (i == 0 ? q->origin.x : (i == 1 ? q->origin.y : q->origin.z))) * invD;
         double t1 = ((i == 0 ? c->max_corner.x : (i == 1 ? c->max_corner.y : c->max_corner.z)) - (i == 0 ? q->origin.x : (i == 1 ? q->origin.y : q->origin.z))) * invD;
 
@@ -183,26 +189,23 @@ int collide_rotated_cube(Cube* cube, Ray* ray, double* t, double angle) {
     return collide_cube(cube, &rotated_ray, t);
 }
 
-
-
-
 int to_color(double c) {
     return pow(c < 0 ? 0 : c > 1 ? 1 : c, .45) * 255 + .5;
 }
 
 Ray create_random(double x, double y) {
-    Vector3 e = { x, -y, 1 };
+    Vector3 e = { x + random() * .01, -y + random() * .01, 1 };
     e = normalize(&e);
     e = scale(&e, 4);
-    Vector3 position = {0, 0, 0};
+    Vector3 position = {.01, .01, .01};
     e = normalize(&e);
     Ray result = { position, e };
     return result;
 }
 
-Sphere box[NUM_OBJECTS] = {
+Sphere spheres[NUM_SPHERES] = {
         {
-            {0, 2, 4}, 1
+            {0, 3, 4}, 1
         },
         {
             {0, -BOX_SIZE, 0}, INF
@@ -223,7 +226,10 @@ Sphere box[NUM_OBJECTS] = {
             {0, 0, BOX_SIZE + 3}, INF
         },
         {
-            {-2, -2, 4}, 2
+            {-1.4, -2, 3}, 0.2
+        },
+        {
+            {0, -0.2, 4}, 0.2
         },
         {
             {2, -3, 4}, 1
@@ -233,23 +239,27 @@ Sphere box[NUM_OBJECTS] = {
         }
 };
 
-Cube cubes[1] = {
+Cube cubes[NUM_CUBES] = {
+    {
+        {-3.9, -1, 3}, {-3, 1, 5}, 0
+    },
     {
         {-1, -3, 3}, {1, -1, 5}, M_PI / 6
-    }
+    },
 };
+
 
 
 int find_intersection(Ray* a, Shape* type, double* t) {
     int n = -1;
-    for (int m = 0; m < NUM_OBJECTS; m++) {
-        if (collide_sphere(&box[m], a, t)) {
+    for (int m = 0; m < NUM_SPHERES; m++) {
+        if (collide_sphere(&spheres[m], a, t)) {
             n = m;
             *type = SPHERE;
         }
     }
 
-    for (int m = 0; m < 1; m++) {
+    for (int m = 0; m < NUM_CUBES; m++) {
         if (collide_rotated_cube(&cubes[m], a, t, cubes[m].angle_y)) {
             n = m;
             *type = CUBE;
@@ -266,7 +276,7 @@ Vector3 trace_ray(Ray* a, int b) {
         Vector3 result = {0, 0, 0};
         return result;
     }
-     if (!n && sh == SPHERE) {
+     if (!n) {
         Vector3 result = {.9, .5, .1};
         return result;
      }
@@ -274,41 +284,35 @@ Vector3 trace_ray(Ray* a, int b) {
     Vector3 P = point_at(a, t);
 
     Vector3 normal;
-    if (sh == SPHERE) {
-        normal = box[n].center;
-        normal = scale(&normal, -1);
-        normal = add(&normal, &P);
-        normal = normalize(&normal);
+if (sh == SPHERE) {
+    normal = scale(&spheres[n].center, -1);
+    normal = add(&normal, &P);
+    normal = normalize(&normal);
+} else {
+    Cube* c = &cubes[n];
+    if (fabs(P.x - c->min_corner.x) < COLLISION_THRESHOLD) {
+        normal = (Vector3){-1.0, 0.0, 0.0};
+    } else if (fabs(P.x - c->max_corner.x) < COLLISION_THRESHOLD) {
+        normal = (Vector3){1.0, 0.0, 0.0};
+    } else if (fabs(P.y - c->min_corner.y) < COLLISION_THRESHOLD) {
+        normal = (Vector3){0.0, -1.0, 0.0};
+    } else if (fabs(P.y - c->max_corner.y) < COLLISION_THRESHOLD) {
+        normal = (Vector3){0.0, 1.0, 0.0};
+    } else if (fabs(P.z - c->min_corner.z) < COLLISION_THRESHOLD) {
+        normal = (Vector3){0.0, 0.0, -1.0};
+    } else {
+        normal = (Vector3){0.0, 0.0, 1.0};
     }
-    else {
-        Cube* c = &cubes[n];
-        Vector3 center = {
-            (c->min_corner.x + c->max_corner.x) / 2.0,
-            (c->min_corner.y + c->max_corner.y) / 2.0,
-            (c->min_corner.z + c->max_corner.z) / 2.0
-        };
-        normal = center;
-        normal = scale(&normal, -1);
-        normal = add(&normal, &P);
-        normal = normalize(&normal);
-        /*
-        if (fabs(P.x - c->min_corner.x) < COLLISION_THRESHOLD) normal = (Vector3){-1, 0, 0};
-        else if (fabs(P.x - c->max_corner.x) < COLLISION_THRESHOLD) normal = (Vector3){1, 0, 0};
-        else if (fabs(P.y - c->min_corner.y) < COLLISION_THRESHOLD) normal = (Vector3){0, -1, 0};
-        else if (fabs(P.y - c->max_corner.y) < COLLISION_THRESHOLD) normal = (Vector3){0, 1, 0};
-        else if (fabs(P.z - c->min_corner.z) < COLLISION_THRESHOLD) normal = (Vector3){0, 0, -1};
-        else if (fabs(P.z - c->max_corner.z) < COLLISION_THRESHOLD) normal = (Vector3){0, 0, 1};
-        normal = rotate_y(&normal, c->angle_y, &center);
-        normal = normalize(&normal);
-        */
-    }
-
-        if (n > 6) {
+}
+        if (n > 8 || (n == -1 && sh == CUBE)) {
             Vector3 inverse_direction = scale(&normal, -2 * dotprod(&normal, &a->direction));
             Vector3 reflection = add(&a->direction, &inverse_direction);
+            reflection = normalize(&reflection);
+            //Vector3 eps = {0, 0, 0};
+            //P = add(&P, &eps);
             Ray r = { P, reflection };
             Vector3 next_vec = trace_ray(&r, b+1);
-            return scale(&next_vec, (n - 6.5)/2);
+            return scale(&next_vec, 1);
         }
 
         double O = 2 * M_PI * random();
@@ -331,6 +335,7 @@ Vector3 trace_ray(Ray* a, int b) {
     if (n == 3)
         j.x = j.z = 0;
     if (n == 4) j.y = j.z = 0;
+    if (n == 7 || n == 8) j.x = 0;
     if (n == 0 && sh == CUBE) {
         j = (Vector3) { 0.2, 0.4, 0.6 };
     }
@@ -343,17 +348,21 @@ int main() {
         srand(time(0));
         FILE *file = fopen("cornell_box.ppm", "w");
         fprintf(file, "P3\n512 512\n255\n");
-        #pragma omp parallel for collapse(2) schedule(dynamic)
+        #pragma omp parallel for collapse(2) schedule(dynamic, 16)
         for (int m = 0; m < 512; m++) {
             for (int n = 0; n < 512; n++) {
                 Vector3 q = {0, 0, 0};
                 for (int k = 0; k < NUM_ITERATIONS; k++) {
                     Ray j = create_random(n / 256.0 - 1, m / 256.0 - 1);
                     Vector3 traced = trace_ray(&j, 0);
-                    traced = scale(&traced, .02);
+                    //traced = scale(&traced, .02);
                     q = add(&q, &traced);
                 }
-                q = scale(&q, 0.9);
+                double exposure = 2;
+                q.x *= exposure / NUM_ITERATIONS;
+                q.y *= exposure / NUM_ITERATIONS;
+                q.z *= exposure / NUM_ITERATIONS;
+
                 fprintf(file, "%d %d %d ", to_color(q.x), to_color(q.y), to_color(q.z));
             }
         }

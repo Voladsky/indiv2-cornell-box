@@ -1,2 +1,2 @@
-gcc -O3 tryshit.c -o tryshit.exe
-tryshit.exe
+gcc -O3 raytrace.c -o raytrace.exe
+raytrace.exe
