@@ -1,2 +1,2 @@
-gcc -O3 raytrace.c -o raytrace.exe
+gcc -Wall --pedantic raytrace.c -O3 -o raytrace.exe
 raytrace.exe
