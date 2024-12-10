@@ -4,7 +4,7 @@
 #include <omp.h>
 #include <time.h>
 
-#define BOX_SIZE 1003
+#define SPHERE_ALIGNMENT 1003
 #define NUM_SPHERES 10
 #define NUM_CUBES 1
 #define TRACE_DEPTH 10
@@ -93,7 +93,13 @@ int collide_sphere(Sphere* s, Ray* r, double* t) {
     Vector3 ray_reverse = scale(&r->origin, -1);
     Vector3 from_center = add(&ray_reverse, &s->center);
     double b = dotprod(&r->direction, &from_center);
-    double c = dotprod(&from_center, &from_center) - s->radius;
+    double c = dotprod(&from_center, &from_center);
+    if (s->radius == INF) {
+        c -= s->radius;
+    }
+    else {
+        c -= s->radius * s->radius;
+    }
     double D = b * b - c;
     if (D < 0) return 0;
     double solve = b - sqrt(D);
@@ -105,12 +111,12 @@ int collide_sphere(Sphere* s, Ray* r, double* t) {
 }
 
 typedef struct {
-    Vector3 min_corner;
-    Vector3 max_corner;
-    Vector3 color;
-    double angle_y;
-    double reflect;
-    double refract;
+    Vector3 center;  // Center of the cube
+    double edge_size; // Edge length of the cube
+    Vector3 color;   // Cube color
+    double angle_y;  // Rotation angle about the Y-axis
+    double reflect;  // Reflectivity
+    double refract;  // Refractivity
 } Cube;
 
 Vector3 rotate_y(Vector3* vec, double angle, Vector3* center) {
@@ -153,47 +159,74 @@ Vector3 inverse_rotate_y(Vector3* vec, double angle, Vector3* center) {
 
 // Collision detection for AABB (Axis-Aligned Bounding Box)
 int collide_cube(Cube* c, Ray* q, double* t) {
-    double t_min = 0, t_max = *t;
+    Vector3 half_size = {c->edge_size / 2, c->edge_size / 2, c->edge_size / 2};
+    Vector3 min_corner = {c->center.x - half_size.x, c->center.y - half_size.y, c->center.z - half_size.z};
+    Vector3 max_corner = {c->center.x + half_size.x, c->center.y + half_size.y, c->center.z + half_size.z};
 
-    for (int i = 0; i < 3; ++i) {
-        double delim = (i == 0 ? q->direction.x : (i == 1 ? q->direction.y : q->direction.z));
-        double invD = 1.0f / ((fabs(delim) > EPSILON) ? delim : EPSILON);
+    double tmin = (min_corner.x - q->origin.x) / q->direction.x;
+    double tmax = (max_corner.x - q->origin.x) / q->direction.x;
+    if (tmin > tmax) { double temp = tmin; tmin = tmax; tmax = temp; }
 
-        double t0 = ((i == 0 ? c->min_corner.x : (i == 1 ? c->min_corner.y : c->min_corner.z)) - (i == 0 ? q->origin.x : (i == 1 ? q->origin.y : q->origin.z))) * invD;
-        double t1 = ((i == 0 ? c->max_corner.x : (i == 1 ? c->max_corner.y : c->max_corner.z)) - (i == 0 ? q->origin.x : (i == 1 ? q->origin.y : q->origin.z))) * invD;
+    double tymin = (min_corner.y - q->origin.y) / q->direction.y;
+    double tymax = (max_corner.y - q->origin.y) / q->direction.y;
+    if (tymin > tymax) { double temp = tymin; tymin = tymax; tymax = temp; }
 
-        if (invD < 0) {
-            double temp = t0;
-            t0 = t1;
-            t1 = temp;
-        }
+    if ((tmin > tymax) || (tymin > tmax)) return 0;
+    if (tymin > tmin) tmin = tymin;
+    if (tymax < tmax) tmax = tymax;
 
-        t_min = t0 > t_min ? t0 : t_min;
-        t_max = t1 < t_max ? t1 : t_max;
+    double tzmin = (min_corner.z - q->origin.z) / q->direction.z;
+    double tzmax = (max_corner.z - q->origin.z) / q->direction.z;
+    if (tzmin > tzmax) { double temp = tzmin; tzmin = tzmax; tzmax = temp; }
 
-        if (t_max <= t_min) return 0;
+    if ((tmin > tzmax) || (tzmin > tmax)) return 0;
+    if (tzmin > tmin) tmin = tzmin;
+    if (tzmax < tmax) tmax = tzmax;
+
+    if (tmin > 0 && tmin < *t) {
+        *t = tmin;
+        return 1;
     }
-
-    *t = t_min;
-    return 1; // Intersection detected
+    return 0;
 }
 
+// Collision detection for rotated cubes
 int collide_rotated_cube(Cube* cube, Ray* ray, double* t, double angle) {
-    //Vector3 center = {0, 0, 0};
-    Vector3 center = {
-        (cube->min_corner.x + cube->max_corner.x) / 2.0,
-        (cube->min_corner.y + cube->max_corner.y) / 2.0,
-        (cube->min_corner.z + cube->max_corner.z) / 2.0
-    };
+    // Transform the ray to cube's local coordinate system
+    Vector3 rotated_origin = inverse_rotate_y(&ray->origin, angle, &cube->center);
+    Vector3 rotated_direction = inverse_rotate_y(&ray->direction, angle, &cube->center);
+    Ray local_ray = {rotated_origin, rotated_direction};
 
-    // Rotate the ray
-    Ray rotated_ray = {
-        rotate_y(&ray->origin, -angle, &center),
-        inverse_rotate_y(&ray->direction, angle, &center)
-    };
+    // Perform collision in local space
+    int result = collide_cube(cube, &local_ray, t);
 
-    // AABB collision
-    return collide_cube(cube, &rotated_ray, t);
+    return result;
+}
+
+// Calculate normals for a cube
+void calculate_cube_normal(Cube* c, Vector3* hit_point, Vector3* normal) {
+    Vector3 half_size = {c->edge_size / 2, c->edge_size / 2, c->edge_size / 2};
+    Vector3 local_hit = inverse_rotate_y(hit_point, c->angle_y, &c->center);
+
+    double dx = fabs(local_hit.x - c->center.x);
+    double dy = fabs(local_hit.y - c->center.y);
+    double dz = fabs(local_hit.z - c->center.z);
+
+    if (dx > dy && dx > dz) {
+        normal->x = (local_hit.x > c->center.x) ? 1 : -1;
+        normal->y = 0;
+        normal->z = 0;
+    } else if (dy > dx && dy > dz) {
+        normal->x = 0;
+        normal->y = (local_hit.y > c->center.y) ? 1 : -1;
+        normal->z = 0;
+    } else {
+        normal->x = 0;
+        normal->y = 0;
+        normal->z = (local_hit.z > c->center.z) ? 1 : -1;
+    }
+
+    *normal = rotate_y(normal, c->angle_y, &c->center);
 }
 
 int to_color(double c) {
@@ -216,7 +249,7 @@ typedef struct {
 
 LightSource lights[LIGHTS_CNT] = {
         {
-            {0, 2, 4}, {.9, .5, .1}
+            {-2, 0.5, 3.5}, {.9, .5, .1}
         },
         // {
         //     {1, -2, 4}, {.2, .5, .7}
@@ -225,22 +258,22 @@ LightSource lights[LIGHTS_CNT] = {
 
 Sphere spheres[NUM_SPHERES] = {
         {
-            {0, -BOX_SIZE, 0}, INF, {1, 0, 1}, 0, 0
+            {0, -SPHERE_ALIGNMENT, 0}, INF, {1, 0, 1}, 0, 0
         },
         {
-            {0, BOX_SIZE, 0}, INF, {1, 1, 1}, 0, 0
+            {0, SPHERE_ALIGNMENT, 0}, INF, {1, 1, 1}, 0, 0
         },
         {
-            {BOX_SIZE, 0, 0}, INF, {0, 1, 0}, 0, 0
+            {SPHERE_ALIGNMENT, 0, 0}, INF, {0, 1, 0}, 1, 0
         },
         {
-            {-BOX_SIZE, 0, 0}, INF, {1, 0, 0}, 0, 0
+            {-SPHERE_ALIGNMENT, 0, 0}, INF, {1, 0, 0}, 0, 0
         },
         {
-            {0, 0, -BOX_SIZE}, INF, {1, 1, 1}, 0, 0
+            {0, 0, -SPHERE_ALIGNMENT}, INF, {1, 1, 1}, 0, 0
         },
         {
-            {0, 0, BOX_SIZE + 3}, INF, {1, 1, 1}, 0, 0
+            {0, 0, SPHERE_ALIGNMENT + 3}, INF, {1, 1, 1}, 0, 0
         },
         {
             {-1.4, -2, 3}, 0.2, {.3, .5, .7}, 0, 1.5
@@ -252,29 +285,13 @@ Sphere spheres[NUM_SPHERES] = {
             {2, -1, 4}, 1, {1, 1, 1}, .1, 0
         },
         {
-            {0, -0.5, 3}, 1, {1, 0, 1}, .4, 0
+            {0, -0.5, 3}, 1, {1, 0, 1}, .4, 1
         }
 };
 
 Cube cubes[NUM_CUBES] = {
-    // {
-    //     {-3, -1, 3}, {-3.9, 1, 5}, {1, 0, 1}, 0, 0, 0
-    // }
-    {
-        {-1, -3, 3}, {1, -1, 5}, {1, .9, 1}, M_PI / 6, 0, 0
-    }
+    {{1, -1, 3}, 1.0, {0.8, 0.2, 0.2}, M_PI / 4, 0, 0.5}
 };
-
-// Cube border_cubes[6] = {
-//     {{-BOX_SIZE, -BOX_SIZE, -BOX_SIZE}, {BOX_SIZE, BOX_SIZE, -BOX_SIZE}, 0},  // Front
-//     {{-BOX_SIZE, -BOX_SIZE, BOX_SIZE}, {BOX_SIZE, BOX_SIZE, BOX_SIZE}, 0},   // Back
-//     {{-BOX_SIZE, -BOX_SIZE, -BOX_SIZE}, {-BOX_SIZE, BOX_SIZE, BOX_SIZE}, M_PI / 2}, // Left
-//     {{BOX_SIZE, -BOX_SIZE, -BOX_SIZE}, {BOX_SIZE, BOX_SIZE, BOX_SIZE}, M_PI / 2},  // Right
-//     {{-BOX_SIZE, -BOX_SIZE, -BOX_SIZE}, {BOX_SIZE, -BOX_SIZE, BOX_SIZE}, M_PI}, // Bottom
-//     {{-BOX_SIZE, BOX_SIZE, -BOX_SIZE}, {BOX_SIZE, BOX_SIZE, BOX_SIZE}, M_PI}  // Top
-// };
-
-
 
 
 int find_intersection(Ray* a, Shape* type, double* t) {
@@ -296,36 +313,30 @@ int find_intersection(Ray* a, Shape* type, double* t) {
     return n;
 }
 
-Vector3 refract(Vector3* direction, Vector3* normal, double eta) {
-    double cos_i = -dotprod(direction, normal);
-
-    Vector3 local_normal = *normal;
-
-    if (cos_i < 0) {
-        cos_i *= -1.0;
-        local_normal = scale(normal, -1);
-        eta = 1/eta;
-    }
-
-    double sin2_t = eta * eta * (1 - cos_i * cos_i); // Snell's Law to compute sin^2(theta_t)
-
-    double cos_t = sqrt(1.0 - sin2_t); // Cosine of the refraction angle
-
-    if (cos_t < 0) {
-        return (Vector3){0, 0, 0};
-    }
-
-    // Calculate the refracted direction using Snell's Law
-    Vector3 refracted = scale(direction, eta);
-    Vector3 scaled_normal = scale(&local_normal, eta * cos_i - cos_t);
-    return add(&refracted, &scaled_normal);
-}
 
 Vector3 reflect(Vector3* direction, Vector3* normal) {
     Vector3 inverse_direction = scale(normal, -2 * dotprod(normal, direction));
     Vector3 reflection = add(direction, &inverse_direction);
     return normalize(&reflection);
 }
+
+Vector3 refract(Vector3* direction, Vector3* normal, double eta) {
+    double cos_i = -dotprod(direction, normal);
+    double sin2_t = eta * eta * (1.0 - cos_i * cos_i);
+
+    // Total internal reflection
+    if (sin2_t > 1.0) {
+        return (Vector3){0, 0, 0}; // No refraction in this case
+    }
+
+    double cos_t = sqrt(1.0 - sin2_t);
+    Vector3 refracted_parallel = scale(direction, eta);
+    Vector3 refracted_perpendicular = scale(normal, eta * cos_i - cos_t);
+    Vector3 refracted = add(&refracted_parallel, &refracted_perpendicular);
+
+    return normalize(&refracted);
+}
+
 
 int is_point_in_shadow(Vector3* point, LightSource* light) {
     Vector3 to_light = {light->position.x - point->x,
@@ -340,7 +351,6 @@ int is_point_in_shadow(Vector3* point, LightSource* light) {
     // If t is smaller than the distance to the light, the point is shadowed.
     return hit && t < sqrt(dotprod(&to_light, &to_light));
 }
-
 
 Vector3 trace_ray(Ray* a, int b) {
     if (b > TRACE_DEPTH) return (Vector3){0, 0, 0};
@@ -367,21 +377,8 @@ Vector3 trace_ray(Ray* a, int b) {
         normal = scale(&spheres[n].center, -1);
         normal = add(&normal, &P);
         normal = normalize(&normal);
-    } else {
-        Cube* c = &cubes[n];
-        if (fabs(P.x - c->min_corner.x) < COLLISION_THRESHOLD) {
-            normal = (Vector3){-1.0, 0.0, 0.0};
-        } else if (fabs(P.x - c->max_corner.x) < COLLISION_THRESHOLD) {
-            normal = (Vector3){1.0, 0.0, 0.0};
-        } else if (fabs(P.y - c->min_corner.y) < COLLISION_THRESHOLD) {
-            normal = (Vector3){0.0, -1.0, 0.0};
-        } else if (fabs(P.y - c->max_corner.y) < COLLISION_THRESHOLD) {
-            normal = (Vector3){0.0, 1.0, 0.0};
-        } else if (fabs(P.z - c->min_corner.z) < COLLISION_THRESHOLD) {
-            normal = (Vector3){0.0, 0.0, -1.0};
-        } else {
-            normal = (Vector3){0.0, 0.0, 1.0};
-        }
+    } else if (sh == CUBE) {
+        calculate_cube_normal(&cubes[n], &P, &normal);
     }
 
     double refr, refl;
@@ -400,6 +397,8 @@ Vector3 trace_ray(Ray* a, int b) {
     // Vector3 ambient = scale(&color, 0.1);
     // next_vec = add(&next_vec, &ambient);
 
+    Vector3 eps_normal = scale(&normal, -EPSILON);
+    P = add(&P, &eps_normal);
 
     if (refr > 0) {
         Vector3 refracted_direction = refract(&a->direction, &normal, 1.5);
@@ -413,6 +412,7 @@ Vector3 trace_ray(Ray* a, int b) {
         Vector3 reflected_direction = reflect(&a->direction, &normal);
         Ray reflected_ray = {P, reflected_direction};
         Vector3 reflection = trace_ray(&reflected_ray, b+1);
+
         reflection = scale(&reflection, refl);
         next_vec = add(&next_vec, &reflection);
     }
@@ -442,7 +442,7 @@ Vector3 trace_ray(Ray* a, int b) {
 
     next_vec = add(&next_vec, &diffuse);
 
-    Vector3 ambient = scale(&color, 0.2);
+    Vector3 ambient = (Vector3){.001, .001, .001};
     next_vec = add(&next_vec, &ambient);
 
     next_vec = hadprod(&next_vec, &color);
@@ -450,28 +450,49 @@ Vector3 trace_ray(Ray* a, int b) {
     return next_vec;
 }
 
-int main() {
-        srand(time(0));
-        FILE *file = fopen("cornell_box.ppm", "w");
-        fprintf(file, "P3\n512 512\n255\n");
-        //#pragma omp parallel for collapse(2) schedule(dynamic, 16)
-        for (int m = 0; m < 512; m++) {
-            for (int n = 0; n < 512; n++) {
-                Vector3 q = {0, 0, 0};
-                for (int k = 0; k < NUM_ITERATIONS; k++) {
-                    Ray j = create_ray(n / 256.0 - 1, m / 256.0 - 1);
-                    Vector3 traced = trace_ray(&j, 1);
-                    q = add(&q, &traced);
-                }
-                double exposure = 1;
-                q.x *= exposure / NUM_ITERATIONS;
-                q.y *= exposure / NUM_ITERATIONS;
-                q.z *= exposure / NUM_ITERATIONS;
 
-                fprintf(file, "%d %d %d ", to_color(q.x), to_color(q.y), to_color(q.z));
+int main()
+{
+    srand(time(0));
+
+    unsigned char image[512][512][3];
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+    for (int m = 0; m < 512; m++)
+    {
+        for (int n = 0; n < 512; n++)
+        {
+            Vector3 q = {0, 0, 0};
+            for (int k = 0; k < NUM_ITERATIONS; k++)
+            {
+                Ray j = create_ray(n / 256.0 - 1, m / 256.0 - 1);
+                Vector3 traced = trace_ray(&j, 1);
+                q = add(&q, &traced);
             }
+            double exposure = 2;
+            q.x *= exposure / NUM_ITERATIONS;
+            q.y *= exposure / NUM_ITERATIONS;
+            q.z *= exposure / NUM_ITERATIONS;
+            image[m][n][0] = to_color(q.x);
+            image[m][n][1] = to_color(q.y);
+            image[m][n][2] = to_color(q.z);
         }
+    }
+
+    FILE *file = fopen("cornell_box2.ppm", "wb");
+    fprintf(file, "P3\n512 512\n255\n");
+
+    for (int m = 0; m < 512; m++)
+    {
+        for (int n = 0; n < 512; n++)
+        {
+            fprintf(file, "%d %d %d ", image[m][n][0], image[m][n][1], image[m][n][2]);
+        }
+        fprintf(file, "\n");
+    }
+
+    fclose(file);
 }
+
 
 
 
