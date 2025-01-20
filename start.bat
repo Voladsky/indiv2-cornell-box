@@ -1,2 +1,2 @@
-gcc -O3 raytrace.c -o raytrace.exe
+gcc -Wall -fopenmp -O3 --pedantic raytrace1.c -o raytrace.exe
 raytrace.exe
