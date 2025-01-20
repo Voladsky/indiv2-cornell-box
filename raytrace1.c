@@ -5,10 +5,10 @@
 #include <time.h>
 
 #define SPHERE_ALIGNMENT 1003
-#define NUM_SPHERES 11
+#define NUM_SPHERES 10
 #define NUM_CUBES 1
-#define TRACE_DEPTH 5
-#define NUM_ITERATIONS 100
+#define TRACE_DEPTH 10
+#define NUM_ITERATIONS 1000
 
 #define COLLISION_THRESHOLD 1e-6
 #define EPSILON 1e-8
@@ -292,7 +292,6 @@ Sphere spheres[NUM_SPHERES] = {
     {{-SPHERE_ALIGNMENT, 0, 0}, INF, 0, {1, 0, 0}, 0, 0},
     {{0, 0, -SPHERE_ALIGNMENT}, INF, 0, {1, 1, 1}, 0, 0},
     {{0, 0, SPHERE_ALIGNMENT + 3}, INF, 0, {1, 1, 1}, 0, 0},
-    {{-1.4, -2, 3}, 0.2, 0, {.1, .2, .3}, 1, 0},
     {{0, -0.2, 4}, 0.2, 0, {1, 1, 1}, 0, 0},
     {{2, -3, 4}, 1, 0, {1, .9, 1}, .4, 0},
     {{2, -1, 4}, 1, 0, {1, .2, .4}, .4, 0}};

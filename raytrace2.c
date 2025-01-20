@@ -5,11 +5,11 @@
 #include <time.h>
 
 #define SPHERE_ALIGNMENT 1003
-#define NUM_SPHERES 10
+#define NUM_SPHERES 9
 #define NUM_CUBES 1
 #define TRACE_DEPTH 10
 #define NUM_ITERATIONS 1
-#define LIGHTS_CNT 1
+#define LIGHTS_CNT 2
 
 #define COLLISION_THRESHOLD 1e-6
 #define EPSILON 1e-8
@@ -111,12 +111,12 @@ int collide_sphere(Sphere* s, Ray* r, double* t) {
 }
 
 typedef struct {
-    Vector3 center;  // Center of the cube
-    double edge_size; // Edge length of the cube
-    Vector3 color;   // Cube color
-    double angle_y;  // Rotation angle about the Y-axis
-    double reflect;  // Reflectivity
-    double refract;  // Refractivity
+    Vector3 center;
+    double edge_size;
+    Vector3 color;
+    double angle_y;
+    double reflect;
+    double refract;
 } Cube;
 
 Vector3 rotate_y(Vector3* vec, double angle, Vector3* center) {
@@ -197,15 +197,13 @@ int collide_rotated_cube(Cube* cube, Ray* ray, double* t, double angle) {
     Vector3 rotated_direction = inverse_rotate_y(&ray->direction, angle, &cube->center);
     Ray local_ray = {rotated_origin, rotated_direction};
 
-    // Perform collision in local space
+    // Perform AABB collision
     int result = collide_cube(cube, &local_ray, t);
 
     return result;
 }
 
-// Calculate normals for a cube
 void calculate_cube_normal(Cube* c, Vector3* hit_point, Vector3* normal) {
-    Vector3 half_size = {c->edge_size / 2, c->edge_size / 2, c->edge_size / 2};
     Vector3 local_hit = inverse_rotate_y(hit_point, c->angle_y, &c->center);
 
     double dx = fabs(local_hit.x - c->center.x);
@@ -249,11 +247,11 @@ typedef struct {
 
 LightSource lights[LIGHTS_CNT] = {
         {
-            {-2, 0.5, 3.5}, {.9, .5, .1}
+            {-2, 2, 3.5}, {.9, .5, .1}
         },
-        // {
-        //     {1, -2, 4}, {.2, .5, .7}
-        // },
+        {
+            {1, -2, 4}, {.2, .5, .7}
+        },
 };
 
 Sphere spheres[NUM_SPHERES] = {
@@ -274,9 +272,6 @@ Sphere spheres[NUM_SPHERES] = {
         },
         {
             {0, 0, SPHERE_ALIGNMENT + 3}, INF, {1, 1, 1}, 0, 0
-        },
-        {
-            {-1.4, -2, 3}, 0.2, {.3, .5, .7}, 0, 1.5
         },
         {
             {0, -0.2, 4}, 0.2, {.1, .2, .3}, 1, 0
